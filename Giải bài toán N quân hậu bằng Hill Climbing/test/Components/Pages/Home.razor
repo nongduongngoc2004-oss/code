@@ -1,0 +1,622 @@
+﻿@page "/"
+@using System.Text
+@using System.Collections.Generic
+@using System.Linq
+@attribute [StreamRendering]
+@rendermode InteractiveServer
+@inject NotificationService NotificationService
+@inject IJSRuntime JS
+@using Microsoft.AspNetCore.Components
+@using Microsoft.AspNetCore.Components.Web
+@using Radzen
+@using Radzen.Blazor
+@using System
+@using System.Threading.Tasks
+@using System.Threading 
+
+<h3>Mô phỏng áp dụng thuật toán Leo đồi để giải quyết bài toán N-Quân Hậu </h3>
+
+<RadzenFieldset Text="Điều khiển">
+    <RadzenRow AlignItems="AlignItems.Center" Gap="8px" class="rz-mb-4">
+        <RadzenLabel Text="N:" />
+        <RadzenNumeric @bind-Value="N" Min="4" Max="1000" Disabled="@isSolving" Style="width: 60px;" />
+
+        <RadzenButton Text="Bắt đầu / Đặt lại" Click="StartNewAlgorithm"
+                      Disabled="@isAutoRunning" ButtonStyle="ButtonStyle.Primary" Icon="play_arrow" />
+
+        <RadzenButton Text="Bước tiếp theo" Click="ExecuteNextStep"
+                      Disabled="@(!isSolving || currentPhase == AlgorithmPhase.FoundSolution || currentPhase == AlgorithmPhase.Stuck || isAutoRunning)"
+                      ButtonStyle="ButtonStyle.Success" Icon="skip_next" />
+
+        <RadzenButton Text="Tua lại" Click="GoBack"
+                      Disabled="@(!CanGoBack || isAutoRunning)" ButtonStyle="ButtonStyle.Secondary" Icon="undo" />
+
+        <RadzenButton Text="Tua đi" Click="GoForward"
+                      Disabled="@(!CanGoForward || isAutoRunning)" ButtonStyle="ButtonStyle.Secondary" Icon="redo" />
+    </RadzenRow>
+
+    <RadzenRow AlignItems="AlignItems.Center" Gap="8px">
+        <RadzenButton Text="@(isAutoRunning ? "Tạm dừng" : "Tự động chạy")" Click="ToggleAutoRun"
+                      Disabled="@(!isSolving || currentPhase == AlgorithmPhase.FoundSolution)"
+                      ButtonStyle="@(isAutoRunning ? ButtonStyle.Warning : ButtonStyle.Info)"
+                      Icon="@(isAutoRunning ? "pause" : "fast_forward")" />
+
+        <RadzenLabel Text="Khi bị kẹt (Tự động):" />
+        <RadzenSelectBar @bind-Value="stuckStrategy" TValue="AutoStuckStrategy" Disabled="@isAutoRunning">
+            <Items>
+                <RadzenSelectBarItem Text="Khởi động lại" Value="AutoStuckStrategy.Restart" />
+                <RadzenSelectBarItem Text="Bước ngẫu nhiên" Value="AutoStuckStrategy.RandomMove" />
+            </Items>
+        </RadzenSelectBar>
+
+        <RadzenLabel Text="Tốc độ:" Style="margin-left: 16px;" />
+        <RadzenSlider @bind-Value="autoRunDelay" Min="10" Max="1000" Disabled="@isAutoRunning" Style="width: 150px;" />
+        <RadzenLabel Text="@($"{autoRunDelay} ms")" Style="width: 50px;" />
+
+    </RadzenRow>
+</RadzenFieldset>
+
+@if (isSolving)
+{
+    <RadzenCard class="rz-my-4">
+        <RadzenRow Gutters="true">
+            <RadzenColumn Size="12" SizeMD="6" SizeLG="3">
+                <RadzenText TextStyle="TextStyle.Subtitle2">Trạng thái:</RadzenText>
+                <RadzenText TextStyle="TextStyle.H6"><b>@GetPhaseText()</b></RadzenText>
+            </RadzenColumn>
+            <RadzenColumn Size="12" SizeMD="6" SizeLG="3">
+                <RadzenText TextStyle="TextStyle.Subtitle2" Style="color: var(--rz-danger-dark)">H (Hiện tại):</RadzenText>
+                <RadzenText TextStyle="TextStyle.H5" Style="color: var(--rz-danger)"><b>@(currentState?.AttackingPairs ?? 0)</b></RadzenText>
+            </RadzenColumn>
+
+        </RadzenRow>
+
+        <div class="rz-mt-3">
+            <RadzenText TextStyle="TextStyle.Subtitle2">Giải thích Bước đi:</RadzenText>
+            <RadzenText>@explanation</RadzenText>
+        </div>
+
+        @if (currentPhase == AlgorithmPhase.Stuck && !isAutoRunning)
+        {
+            <RadzenRow AlignItems="AlignItems.Center" Gap="8px" class="rz-mt-3">
+                <RadzenButton Text="Khởi động lại" Click="HandleRestart"
+                              ButtonStyle="ButtonStyle.Warning" Icon="restart_alt" />
+                <RadzenButton Text="Thử bước đi ngẫu nhiên" Click="PerformRandomMove"
+                              ButtonStyle="ButtonStyle.Info" Icon="shuffle" />
+            </RadzenRow>
+        }
+    </RadzenCard>
+}
+
+<RadzenRow Gap="16px" Class="rz-mt-4">
+    <RadzenColumn Size="12" SizeMD="6">
+        <RadzenFieldset Text="Bàn cờ minh họa">
+            @if (currentState != null)
+            {
+                <div class="chessboard-wrapper">
+                    <div class="coord-container-col" style="padding-left: 25px;">
+                        @for (int col = 0; col < N; col++)
+                        {
+                            <div class="coord-cell coord-col">@((char)('A' + col))</div>
+                        }
+                    </div>
+                    <div style="display: flex; flex-direction: row;">
+                        <div class="coord-container-row">
+                            @for (int row = 0; row < N; row++)
+                            {
+                                <div class="coord-cell coord-row">@(N - row)</div>
+                            }
+                        </div>
+                        <div class="chessboard" style="grid-template-columns: repeat(@N, 35px); grid-template-rows: repeat(@N, 35px);">
+                            @for (int row = 0; row < N; row++)
+                            {
+                                @for (int col = 0; col < N; col++)
+                                {
+                                    var squareClass = (row + col) % 2 == 0 ? "light-square" : "dark-square";
+                                    <div class="square @squareClass">
+                                        @if (currentState.Board[col] == row)
+                                        {
+                                            <span class="queen">♕</span>
+                                        }
+                                    </div>
+                                }
+                            }
+                        </div>
+                    </div>
+                </div>
+            }
+            else
+            {
+                <RadzenText>'Bắt đầu / Đặt lại'.</RadzenText>
+            }
+        </RadzenFieldset>
+    </RadzenColumn>
+
+    <RadzenColumn Size="12" SizeMD="6">
+        <RadzenFieldset Text="Lịch sử các bước đi (Log)">
+            <RadzenTextArea @bind-Value="logOutput" ReadOnly="true" Style="height: 400px; width: 100%; font-family: 'Courier New', monospace;" />
+        </RadzenFieldset>
+    </RadzenColumn>
+</RadzenRow>
+
+<style>
+    .chessboard-wrapper {
+        width: fit-content;
+    }
+
+    .coord-container-col {
+        display: flex;
+        flex-direction: row;
+    }
+
+    .coord-container-row {
+        display: flex;
+        flex-direction: column;
+    }
+
+    .coord-cell {
+        display: flex;
+        justify-content: center;
+        align-items: center;
+        font-size: 14px;
+        font-weight: bold;
+        color: #777;
+        user-select: none;
+    }
+
+    .coord-col {
+        width: 35px;
+        height: 25px;
+    }
+
+    .coord-row {
+        width: 25px;
+        height: 35px;
+    }
+
+    .chessboard {
+        display: grid;
+        border: 2px solid #333;
+    }
+
+    .square {
+        width: 35px;
+        height: 35px;
+        display: flex;
+        justify-content: center;
+        align-items: center;
+        font-size: 28px;
+        user-select: none;
+        box-shadow: inset 0 0 0 1px rgba(0,0,0,0.1);
+    }
+
+    .queen {
+        color: #000;
+        text-shadow: 0 0 3px #fff;
+    }
+
+    .light-square {
+        background-color: #f0d9b5;
+    }
+
+    .dark-square {
+        background-color: #b58863;
+    }
+
+    .rz-textarea textarea {
+        background-color: #2b2b2b;
+        color: #a9b7c6;
+        font-size: 13px;
+    }
+</style>
+
+
+@code {
+    //======================================================================
+    // 1. LỚP MODEL (NQUEENSSTATE.CS) - Không thay đổi
+    //======================================================================
+    public class NQueensState
+    {
+        public int[] Board { get; private set; }
+        public int N { get; private set; }
+        public int AttackingPairs { get; private set; }
+        private static Random _random = new Random();
+
+        public NQueensState(int n)
+        {
+            N = n;
+            Board = new int[N];
+            for (int i = 0; i < N; i++) { Board[i] = _random.Next(N); }
+            CalculateAttackingPairs();
+        }
+
+        public NQueensState(NQueensState copy)
+        {
+            N = copy.N;
+            Board = (int[])copy.Board.Clone();
+            AttackingPairs = copy.AttackingPairs;
+        }
+
+        public void CalculateAttackingPairs()
+        {
+            AttackingPairs = 0;
+            for (int i = 0; i < N; i++)
+            {
+                for (int j = i + 1; j < N; j++)
+                {
+                    if (Board[i] == Board[j] || Math.Abs(Board[i] - Board[j]) == Math.Abs(i - j))
+                    {
+                        AttackingPairs++;
+                    }
+                }
+            }
+        }
+
+        public class MoveDetail
+        {
+            public int Column { get; set; }
+            public int OldRow { get; set; }
+            public int NewRow { get; set; }
+            public int NewH { get; set; }
+        }
+
+        public NQueensState GetBestNeighbor(out MoveDetail moveDetail)
+        {
+            NQueensState bestNeighbor = this;
+            int minAttacks = this.AttackingPairs;
+            moveDetail = new MoveDetail { NewH = minAttacks };
+
+            for (int col = 0; col < N; col++)
+            {
+                int originalRow = Board[col];
+                for (int row = 0; row < N; row++)
+                {
+                    if (row == originalRow) continue;
+                    Board[col] = row;
+                    CalculateAttackingPairs();
+
+                    if (this.AttackingPairs < minAttacks)
+                    {
+                        minAttacks = this.AttackingPairs;
+                        bestNeighbor = new NQueensState(this);
+                        moveDetail.Column = col;
+                        moveDetail.OldRow = originalRow;
+                        moveDetail.NewRow = row;
+                        moveDetail.NewH = minAttacks;
+                    }
+                }
+                Board[col] = originalRow;
+                CalculateAttackingPairs();
+            }
+            return bestNeighbor;
+        }
+
+        public string GetChessCoordinate(int col, int row)
+        {
+            char colChar = (char)('A' + col);
+            int rowInt = N - row;
+            return $"{colChar}{rowInt}";
+        }
+    }
+
+    //======================================================================
+    // 2. PHẦN LOGIC CỦA COMPONENT (.RAZOR.CS)
+    //======================================================================
+
+    // Thuộc tính giao diện
+    protected int N { get; set; } = 8;
+    protected string logOutput = "";
+    protected string explanation = "Bắt đầu / Đặt lại";
+    protected bool isSolving = false;
+
+    // Thuộc tính Thuật toán
+    private int restartCount = 0;
+    private int stepCount = 0;
+    private int maxRestarts = 100;
+    private int maxStepsPerClimb = 200;
+    private Random _random = new Random();
+
+    private NQueensState currentState;
+    private NQueensState bestNeighbor;
+
+    // Thuộc tính Tua đi/Tua lại
+    private List<NQueensState> history = new List<NQueensState>();
+    private int historyIndex = -1;
+
+    // Enum và Text
+    private enum AlgorithmPhase { Idle, Climbing, Stuck, FoundSolution }
+    private AlgorithmPhase currentPhase = AlgorithmPhase.Idle;
+
+    // --- NEW: Thuộc tính Tự động chạy ---
+    private bool isAutoRunning = false;
+    private CancellationTokenSource autoRunCts;
+    private enum AutoStuckStrategy { Restart, RandomMove }
+    private AutoStuckStrategy stuckStrategy = AutoStuckStrategy.Restart;
+    private int autoRunDelay = 100; // Tốc độ (ms)
+
+
+    protected bool CanGoBack => historyIndex > 0;
+    protected bool CanGoForward => historyIndex < history.Count - 1;
+
+    // --- Các hàm Tua đi/Tua lại ---
+
+    protected void GoBack()
+    {
+        if (!CanGoBack) return;
+        StopAutoRun(); // NEW: Dừng tự động chạy khi tua
+
+        historyIndex--;
+        currentState = history[historyIndex];
+        bestNeighbor = null;
+        currentPhase = AlgorithmPhase.Climbing;
+        explanation = $"Đã tua lại về bước {historyIndex}. H hiện tại: {currentState.AttackingPairs}.";
+        UpdateLogDisplayForHistory();
+        StateHasChanged();
+    }
+
+    protected void GoForward()
+    {
+        if (!CanGoForward) return;
+        StopAutoRun(); // NEW: Dừng tự động chạy khi tua
+
+        historyIndex++;
+        currentState = history[historyIndex];
+        bestNeighbor = null;
+        currentPhase = AlgorithmPhase.Climbing;
+        explanation = $"Đã tua đi đến bước {historyIndex}. H hiện tại: {currentState.AttackingPairs}.";
+        UpdateLogDisplayForHistory();
+        StateHasChanged();
+    }
+
+    // --- Các hàm thuật toán ---
+
+    protected void StartNewAlgorithm()
+    {
+        StopAutoRun(); // NEW: Dừng tự động chạy khi bắt đầu mới
+        isSolving = true;
+        logOutput = "";
+        restartCount = 1;
+        bestNeighbor = null;
+        history.Clear();
+        historyIndex = -1;
+        Log($"Bắt đầu thuật toán Leo đồi giả bài toán {N} quân hậu.");
+        InitializeClimb();
+        StateHasChanged();
+    }
+
+    private void InitializeClimb()
+    {
+        if (historyIndex < history.Count - 1)
+        {
+            history.RemoveRange(historyIndex + 1, history.Count - 1 - historyIndex);
+        }
+        stepCount = 0;
+        currentState = new NQueensState(N);
+        history.Add(currentState);
+        historyIndex = history.Count - 1;
+        explanation = $"Trạng thái khởi tạo ngẫu nhiên. Số lần khởi động lại: {restartCount}.";
+        Log($"--- KHỞI ĐỘNG Lần {restartCount} --- H ban đầu: {currentState.AttackingPairs}.");
+
+        if (currentState.AttackingPairs == 0)
+        {
+            currentPhase = AlgorithmPhase.FoundSolution;
+            explanation = "!!! TÌM THẤY GIẢI PHÁP ngay khi khởi tạo ngẫu nhiên! H = 0.";
+            Log("!!! TÌM THẤY GIẢI PHÁP ngay khi khởi tạo ngẫu nhiên! (H = 0)");
+            StopAutoRun(); // NEW: Dừng nếu vô tình tìm thấy giải pháp
+        }
+        else
+        {
+            currentPhase = AlgorithmPhase.Climbing;
+        }
+    }
+
+    protected void ExecuteNextStep()
+    {
+        if (!isSolving || currentPhase == AlgorithmPhase.FoundSolution || currentPhase == AlgorithmPhase.Stuck || isAutoRunning) return;
+
+        if (currentPhase == AlgorithmPhase.Climbing)
+        {
+            PerformClimbStep();
+        }
+        StateHasChanged();
+    }
+
+    private void PerformClimbStep()
+    {
+        if (currentState.AttackingPairs == 0)
+        {
+            currentPhase = AlgorithmPhase.FoundSolution;
+            explanation = "!!! ĐÃ TÌM THẤY GIẢI PHÁP !!! Thuật toán kết thúc.";
+            Log("!!! ĐÃ TÌM THẤY GIẢI PHÁP !!! (H = 0)");
+            StopAutoRun(); // NEW: Dừng tự động chạy khi tìm thấy
+            return;
+        }
+        if (stepCount >= maxStepsPerClimb)
+        {
+            Log($"-> Đạt giới hạn {maxStepsPerClimb} bước. Bị kẹt.");
+            currentPhase = AlgorithmPhase.Stuck;
+            explanation = $"Đạt giới hạn {maxStepsPerClimb} bước. Bị kẹt. Chọn 'Khởi động lại' hoặc 'Thử bước đi ngẫu nhiên'.";
+            return;
+        }
+
+        NQueensState.MoveDetail moveDetail;
+        bestNeighbor = currentState.GetBestNeighbor(out moveDetail);
+
+        if (bestNeighbor.AttackingPairs < currentState.AttackingPairs)
+        {
+            string oldPos = currentState.GetChessCoordinate(moveDetail.Column, moveDetail.OldRow);
+            string newPos = currentState.GetChessCoordinate(moveDetail.Column, moveDetail.NewRow);
+            explanation = $"Hàng xóm tốt nhất ( H={moveDetail.NewH} ) thấp hơn H hiện tại ( H={currentState.AttackingPairs} ). " +
+                            $"DI CHUYỂN: Quân hậu ở {oldPos} chuyển đến {newPos}. (Giảm {currentState.AttackingPairs - moveDetail.NewH} xung đột).";
+            Log($"BƯỚC {stepCount + 1}: Di chuyển quân hậu từ {oldPos} -> {newPos}. H từ {currentState.AttackingPairs} -> {moveDetail.NewH}.");
+
+            currentState = bestNeighbor;
+            history.Add(currentState);
+            historyIndex++;
+            stepCount++;
+            bestNeighbor = null;
+        }
+        else
+        {
+            currentPhase = AlgorithmPhase.Stuck;
+            explanation = $"Hàng xóm tốt nhất ( H={bestNeighbor.AttackingPairs} ) không thấp hơn H hiện tại ( H={currentState.AttackingPairs} ). " +
+                            $"BỊ KẸT. Chọn 'Khởi động lại' hoặc 'Thử bước đi ngẫu nhiên'.";
+            Log($"-> Bị kẹt ở Cực tiểu Cục bộ ( H = {currentState.AttackingPairs} ). Hàng xóm tốt nhất H = {bestNeighbor.AttackingPairs}.");
+            bestNeighbor = null;
+        }
+    }
+
+    protected void PerformRandomMove()
+    {
+        if (currentPhase != AlgorithmPhase.Stuck) return;
+
+        var newState = new NQueensState(currentState);
+        int colToMove = _random.Next(N);
+        int oldRow = newState.Board[colToMove];
+        int newRow;
+        do { newRow = _random.Next(N); } while (newRow == oldRow);
+
+        newState.Board[colToMove] = newRow;
+        newState.CalculateAttackingPairs();
+
+        string oldPos = newState.GetChessCoordinate(colToMove, oldRow);
+        string newPos = newState.GetChessCoordinate(colToMove, newRow);
+        explanation = $"Bước đi ngẫu nhiên: Di chuyển quân hậu từ {oldPos} đến {newPos}. " +
+                      $"H mới là {newState.AttackingPairs}. Tiếp tục leo đồi.";
+        Log($"BƯỚC {stepCount + 1} (Ngẫu nhiên): Di chuyển {oldPos} -> {newPos}. H từ {currentState.AttackingPairs} -> {newState.AttackingPairs}.");
+
+        currentState = newState;
+        history.Add(currentState);
+        historyIndex++;
+        stepCount++;
+        currentPhase = AlgorithmPhase.Climbing;
+
+        if (currentState.AttackingPairs == 0)
+        {
+            currentPhase = AlgorithmPhase.FoundSolution;
+            explanation = "!!! TÌM THẤY GIẢI PHÁP sau một bước đi ngẫu nhiên!";
+            Log("!!! TÌM THẤY GIẢI PHÁP (H = 0) sau bước đi ngẫu nhiên!");
+            StopAutoRun(); // NEW: Dừng nếu tìm thấy
+        }
+        StateHasChanged();
+    }
+
+    protected void HandleRestart()
+    {
+        if (restartCount >= maxRestarts)
+        {
+            explanation = $"Đã hết {maxRestarts} lần khởi động lại. Thuật toán thất bại.";
+            Log($"\nĐã hết {maxRestarts} lần khởi động lại. Không tìm thấy giải pháp.");
+            isSolving = false;
+            currentPhase = AlgorithmPhase.Idle;
+            StopAutoRun(); // NEW: Dừng khi hết số lần khởi động lại
+        }
+        else
+        {
+            restartCount++;
+            InitializeClimb();
+        }
+        StateHasChanged();
+    }
+
+    // --- NEW: Các hàm Tự động chạy ---
+
+    private void ToggleAutoRun()
+    {
+        if (isAutoRunning)
+        {
+            StopAutoRun();
+        }
+        else
+        {
+            StartAutoRun();
+        }
+        StateHasChanged();
+    }
+
+    private void StartAutoRun()
+    {
+        isAutoRunning = true;
+        autoRunCts = new CancellationTokenSource();
+        // Bắt đầu vòng lặp ở một luồng khác (không chặn UI)
+        _ = RunAlgorithmAutomatically(autoRunCts.Token);
+    }
+
+    private void StopAutoRun()
+    {
+        isAutoRunning = false;
+        autoRunCts?.Cancel();
+        autoRunCts?.Dispose();
+        autoRunCts = null;
+    }
+
+    private async Task RunAlgorithmAutomatically(CancellationToken token)
+    {
+        while (isAutoRunning && !token.IsCancellationRequested)
+        {
+            switch (currentPhase)
+            {
+                case AlgorithmPhase.Climbing:
+                    PerformClimbStep();
+                    break;
+
+                case AlgorithmPhase.Stuck:
+                    if (stuckStrategy == AutoStuckStrategy.Restart)
+                    {
+                        HandleRestart();
+                    }
+                    else // RandomMove
+                    {
+                        PerformRandomMove();
+                    }
+                    break;
+
+                case AlgorithmPhase.FoundSolution:
+                case AlgorithmPhase.Idle:
+                    StopAutoRun(); // Dừng nếu thuật toán kết thúc
+                    break;
+            }
+
+            // Cập nhật giao diện và tạm dừng
+            try
+            {
+                StateHasChanged();
+                await Task.Delay(autoRunDelay, token);
+            }
+            catch (TaskCanceledException)
+            {
+                // Bắt ngoại lệ khi người dùng nhấn Tạm dừng (hủy Task.Delay)
+                isAutoRunning = false;
+            }
+        }
+
+        // Đảm bảo trạng thái cuối cùng được cập nhật
+        isAutoRunning = false;
+        StateHasChanged();
+    }
+
+
+    // --- Hàm tiện ích ---
+    private string GetPhaseText()
+    {
+        switch (currentPhase)
+        {
+            case AlgorithmPhase.Climbing: return "Đang leo đồi";
+            case AlgorithmPhase.Stuck: return "Bị kẹt (Cực tiểu)";
+            case AlgorithmPhase.FoundSolution: return "Đã tìm thấy giải pháp!";
+            case AlgorithmPhase.Idle: return "Đang chờ";
+            default: return "Không xác định";
+        }
+    }
+
+    private void Log(string message)
+    {
+        logOutput = $"{message}\n{logOutput}";
+        UpdateLogDisplayForHistory();
+    }
+
+    private void UpdateLogDisplayForHistory()
+    {
+        // (Giữ nguyên logic cũ)
+    }
+}
